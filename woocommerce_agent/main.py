@@ -23,6 +23,11 @@ from retriever.retrieval import query_supabase, get_product_semantic
 from langchain_community.embeddings import HuggingFaceEmbeddings
 import re
 
+
+import subprocess
+import signal
+
+mcp_process = None
 # Load environment variables
 load_dotenv()
 
@@ -31,38 +36,29 @@ http_client = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global http_client
+    global http_client, mcp_process
+
+    mcp_process = subprocess.Popen(
+        ["python", "mcp/first_server.py"],  
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE
+    )
+
     http_client = AsyncClient()
 
-    # Load MCP tools
+    # Chờ MCP server sẵn sàng trước khi gọi tool
+    await asyncio.sleep(3)
+
+    # Gọi để lấy tool từ MCP (nếu chưa có sẵn)
+    global tools
     tools = await get_mcp_tools()
 
-    # Tạo LLM và agent
-    embedding_model = HuggingFaceEmbeddings(
-        model_name="Alibaba-NLP/gte-multilingual-base",
-        model_kwargs={'device': 'cuda' if torch.cuda.is_available() else 'cpu', 'trust_remote_code': True}
-    )
+    yield  
 
-    def get_product_semantic_tool(query: str) -> str:
-        return get_product_semantic(query, embedding_model=embedding_model)
-
-    llm = get_langchain_model()
-
-    app.state.agent_graph = create_react_agent(
-        model=llm,
-        tools=[get_product_semantic_tool, query_supabase, *tools],
-        prompt=system_prompt
-    )
-
-    app.state.metadata_agent = create_react_agent(
-        model=llm,
-        tools=[],
-        prompt="You are a helpful assistant."
-    )
-
-    yield
-
+    #Cleanup khi app shutdown
     await http_client.aclose()
+    if mcp_process:
+        mcp_process.send_signal(signal.SIGINT)
 
 # Initialize FastAPI app with lifespan
 app = FastAPI(lifespan=lifespan)
