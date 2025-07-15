@@ -1,0 +1,4 @@
+.venv
+.env
+/retriever/__pycache__
+/retriever/meta_data.xlsx:Zone.Identifier
